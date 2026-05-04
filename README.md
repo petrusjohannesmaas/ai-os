@@ -24,7 +24,7 @@ Mercy OS is built around four composable layers:
 
 **Mercy Tools** — isolated binaries that expose discrete capabilities via the Model Context Protocol (MCP). Each tool is self-contained: its own logic, its own schema, its own Nix module.
 
-**Mercy Workflows** — pipelines for multi-step tasks that require more than a single tool call. Planned for a later phase.
+**Mercy Workflows** — LangGraph-based pipelines for multi-step tasks that require more than a single tool call. Planned for a later phase.
 
 ---
 

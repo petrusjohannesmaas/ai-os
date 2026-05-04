@@ -1,3 +1,5 @@
+**0. Kanban Orchestration Platform: Designed to build and manage hybrid or "zero-human" projects, where autonomous AI agents handle business tasks, workflows, and deliver products / services.
+
 **1. The Code Editor** Fast, extensible, but opinionated by default. Syntax highlighting, intelligent autocomplete, inline error detection. Git integration so seamless you barely think about commits. Terminal built-in at the bottom. Language servers for whatever you're coding in. Split panes for referencing other files. Command palette for everything. But—and this is key—it stays out of your way. No constant notifications, no AI constantly interrupting with suggestions unless you ask.
 
 **4. The Database Browser** Visual query builder for when you need it, raw SQL when you want it. Browse tables, see relationships, test queries. Works with Postgres, MySQL, SQLite, MongoDB—whatever you're using. Local and remote connections. No bloat.
