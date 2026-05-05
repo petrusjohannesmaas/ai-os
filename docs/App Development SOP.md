@@ -1,4 +1,4 @@
-# Mercy OS — Application Infrastructure & Dev Workflow (v1.1)
+# Mercy OS — Application Infrastructure & Dev Workflow (v1.2)
 
 ---
 
@@ -23,21 +23,30 @@ Logic (pure functions)
 * ADK handles the event loop, LLM calls, tool selection, and tool execution — no custom router
 * MCP servers are isolated subprocesses spawned on demand via stdio
 * Tool registration is code-level — tools are declared in `agent.py`, not via filesystem manifests
-* Logic is reused across MCP server and optional GUI (if it exists)
+* Every component — tools and agent — is a first-class Nix package
 * ADK Web UI replaces Mercy Shell for the testing and alpha phase
 
 ---
 
-## Application Structure (per tool)
+## Project Structure
 
 ```
-apps/<tool-name>/
-├── logic.py        # core functionality (pure, reusable)
-├── mcp_server.py   # MCP wrapper (exposes functions via fastmcp)
-└── gui.py          # optional
+mercy-os/
+├── flake.nix
+├── configuration.nix
+├── apps/
+│   └── <tool-name>/
+│       ├── default.nix     # Nix derivation
+│       ├── logic.py        # core functionality (pure, reusable)
+│       └── mcp_server.py   # MCP wrapper (exposes functions via fastmcp)
+└── mercy/
+    └── agent/
+        ├── default.nix     # Nix derivation
+        ├── agent.py
+        └── __init__.py
 ```
 
-No `manifest.json`. No `/etc/mercy/tools/` registration.
+No `manifest.json`. No `/etc/mercy/tools/` registration. No `.env` file.
 
 ---
 
@@ -72,11 +81,34 @@ if __name__ == "__main__":
 
 ---
 
-### 3. Agent definition (`mercy/agent/agent.py`)
+### 3. Tool derivation (`apps/<tool-name>/default.nix`)
 
-Tools are registered directly on the agent via `McpToolset`. Each tool is a subprocess connected over stdio.
+Each tool is its own Nix package. `flake.nix` composes them via `callPackage`.
+
+```nix
+{ python3Packages }:
+
+python3Packages.buildPythonApplication {
+  pname = "mercy-<tool>-mcp";
+  version = "0.1";
+  src = ./.;
+  propagatedBuildInputs = [ python3Packages.fastmcp ];
+  installPhase = ''
+    mkdir -p $out/bin
+    cp mcp_server.py $out/bin/mercy-<tool>-mcp
+    chmod +x $out/bin/mercy-<tool>-mcp
+  '';
+}
+```
+
+---
+
+### 4. Agent definition (`mercy/agent/agent.py`)
+
+API key is read from the environment at runtime — not stored in the Nix store.
 
 ```python
+import os
 from google.adk.agents import LlmAgent
 from google.adk.tools.mcp_tool import McpToolset
 from google.adk.tools.mcp_tool.mcp_session_manager import StdioConnectionParams
@@ -102,28 +134,49 @@ root_agent = LlmAgent(
 
 ---
 
-## Nix Integration
-
-Each tool must:
-
-### 1. Build a binary
+### 5. Agent derivation (`mercy/agent/default.nix`)
 
 ```nix
-buildPythonApplication {
-  pname = "mercy-<tool>-mcp";
-  src = ./apps/<tool>;
-  propagatedBuildInputs = [ pkgs.python3Packages.fastmcp ];
+{ python3Packages }:
+
+python3Packages.buildPythonApplication {
+  pname = "mercy-agent";
+  version = "0.1";
+  src = ./.;
+  propagatedBuildInputs = [ python3Packages.google-adk ];
   installPhase = ''
     mkdir -p $out/bin
-    cp mcp_server.py $out/bin/mercy-<tool>-mcp
-    chmod +x $out/bin/mercy-<tool>-mcp
+    cp agent.py $out/bin/mercy-agent
+    chmod +x $out/bin/mercy-agent
   '';
 }
 ```
 
-### 2. No manifest registration required
+---
 
-Tool discovery is handled by ADK at agent init time, not by the filesystem.
+### 6. Flake composition (`flake.nix`)
+
+`flake.nix` composes packages via `callPackage`. Each app's derivation is self-contained.
+
+```nix
+packages.${system} = {
+  mercy-calculator-mcp = pkgs.callPackage ./apps/calculator {};
+  mercy-agent          = pkgs.callPackage ./mercy/agent {};
+};
+```
+
+---
+
+### 7. System packages (`configuration.nix`)
+
+All Mercy packages ship with the OS.
+
+```nix
+environment.systemPackages = [
+  self.packages.${system}.mercy-calculator-mcp
+  self.packages.${system}.mercy-agent
+];
+```
 
 ---
 
@@ -132,11 +185,12 @@ Tool discovery is handled by ADK at agent init time, not by the filesystem.
 ### 1. Create tool
 
 ```
-mkdir -p apps/mytool
+mkdir -p apps/<tool-name>
 ```
 
 Add:
 
+* `default.nix`
 * `logic.py`
 * `mcp_server.py`
 
@@ -148,13 +202,23 @@ Add a new `McpToolset` entry to `mercy/agent/agent.py`.
 
 ---
 
-### 3. Add to flake
+### 3. Expose in flake
 
-Package the binary in `flake.nix`. No manifest registration step.
+Add a `callPackage` entry to `flake.nix` and include the package in `configuration.nix`.
 
 ---
 
-### 4. Rebuild system
+### 4. Verify the build in isolation
+
+Before rebuilding the system, confirm the derivation builds cleanly:
+
+```fish
+nix build .#mercy-<tool>-mcp
+```
+
+---
+
+### 5. Rebuild system
 
 ```fish
 sudo nixos-rebuild switch --flake .#mercy
@@ -162,10 +226,12 @@ sudo nixos-rebuild switch --flake .#mercy
 
 ---
 
-### 5. Run and test
+### 6. Run and test
+
+Set your API key in the current shell session, then launch the agent:
 
 ```fish
-cd mercy/agent
+set -x GOOGLE_API_KEY "your-key-here"
 adk web --port 8000
 ```
 
@@ -177,6 +243,7 @@ Access at `http://localhost:8000`. Select `mercy_agent` and interact.
 
 * You are building **capabilities**, not apps
 * Each tool: small, composable, stateless
+* Every component is a Nix package — tools, agent, and OS are one reproducible unit
 * ADK owns the orchestration layer — do not reimplement it
 
 ---
@@ -190,6 +257,8 @@ Avoid:
 * Embedding logic in the MCP layer
 * Long-running MCP server processes
 * Async agent creation patterns (breaks deployment)
+* Inline derivations in `flake.nix` — each package belongs in its own `default.nix`
+* Storing secrets in the Nix store
 
 ---
 
@@ -199,10 +268,12 @@ A tool is complete when:
 
 * `logic.py` contains pure functions
 * `mcp_server.py` exposes them via `fastmcp`
-* The binary is registered in `flake.nix`
+* `default.nix` defines the derivation
+* A `callPackage` entry exists in `flake.nix`
+* The package is listed in `configuration.nix`
 * A `McpToolset` entry for it exists in `agent.py`
+* `nix build .#mercy-<tool>-mcp` succeeds
 * ADK selects and executes it correctly via `adk web`
-* No changes were required outside the tool folder + flake + agent.py
 
 ---
 
@@ -214,5 +285,6 @@ A tool is complete when:
 | Tool protocol | MCP via `fastmcp` (stdio) |
 | Tool-agent bridge | `McpToolset` + `StdioConnectionParams` |
 | UI (testing/alpha) | ADK Web UI (`adk web`) |
-| Packaging | Nix (`buildPythonApplication`) |
+| Packaging | Nix (`buildPythonApplication` + `callPackage`) |
+| Secrets | Runtime environment variable (`GOOGLE_API_KEY`) |
 | Language | Python 3.10+ |

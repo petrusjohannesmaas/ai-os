@@ -1,4 +1,4 @@
-# MERCY OS — End-to-End Experiment v1.1 (ADK + MCP Native)
+# MERCY OS — End-to-End Experiment v1.2 (ADK + MCP Native)
 
 > Open ADK Web UI → type prompt → ADK + Gemini decides → calls MCP tool via stdio → returns result
 > Built with Nix, pure Python, using ADK's native MCP integration.
@@ -9,29 +9,19 @@
 
 ```
 mercy-os/
-│
 ├── flake.nix
 ├── configuration.nix
-│
 ├── apps/
 │   └── calculator/
+│       ├── default.nix
 │       ├── logic.py
-│       ├── mcp_server.py
-│       └── gui.py          # optional
-│
+│       └── mcp_server.py
 └── mercy/
     └── agent/
+        ├── default.nix
         ├── agent.py
-        ├── __init__.py
-        └── .env
+        └── __init__.py
 ```
-
-**What's gone vs v1.0:**
-
-* `mercy/router/` — replaced by ADK
-* `mercy/shell/` — replaced by `adk web`
-* `apps/*/manifest.json` — no longer needed
-* `/etc/mercy/tools/` — no longer needed
 
 ---
 
@@ -75,11 +65,34 @@ if __name__ == "__main__":
 
 ---
 
-## 4. ADK Agent
+## 4. Calculator Derivation
+
+### `apps/calculator/default.nix`
+
+```nix
+{ python3Packages }:
+
+python3Packages.buildPythonApplication {
+  pname = "mercy-calculator-mcp";
+  version = "0.1";
+  src = ./.;
+  propagatedBuildInputs = [ python3Packages.fastmcp ];
+  installPhase = ''
+    mkdir -p $out/bin
+    cp mcp_server.py $out/bin/mercy-calculator-mcp
+    chmod +x $out/bin/mercy-calculator-mcp
+  '';
+}
+```
+
+---
+
+## 5. ADK Agent
 
 ### `mercy/agent/agent.py`
 
 ```python
+import os
 from google.adk.agents import LlmAgent
 from google.adk.tools.mcp_tool import McpToolset
 from google.adk.tools.mcp_tool.mcp_session_manager import StdioConnectionParams
@@ -108,21 +121,33 @@ root_agent = LlmAgent(
 from . import agent
 ```
 
-### `mercy/agent/.env`
+### `mercy/agent/default.nix`
 
-```
-GOOGLE_API_KEY="YOUR_API_KEY_HERE"
+```nix
+{ python3Packages }:
+
+python3Packages.buildPythonApplication {
+  pname = "mercy-agent";
+  version = "0.1";
+  src = ./.;
+  propagatedBuildInputs = [ python3Packages.google-adk ];
+  installPhase = ''
+    mkdir -p $out/bin
+    cp agent.py $out/bin/mercy-agent
+    chmod +x $out/bin/mercy-agent
+  '';
+}
 ```
 
 ---
 
-## 5. flake.nix
+## 6. flake.nix
 
 ```nix
 {
-  description = "Mercy OS Experiment v1.1";
+  description = "Mercy OS Experiment v1.2";
 
-  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-24.05";
+  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
 
   outputs = { self, nixpkgs }:
   let
@@ -130,19 +155,8 @@ GOOGLE_API_KEY="YOUR_API_KEY_HERE"
     pkgs = import nixpkgs { inherit system; };
   in {
     packages.${system} = {
-
-      mercy-calculator-mcp = pkgs.python3Packages.buildPythonApplication {
-        pname = "mercy-calculator-mcp";
-        version = "0.1";
-        src = ./apps/calculator;
-        propagatedBuildInputs = [ pkgs.python3Packages.fastmcp ];
-        installPhase = ''
-          mkdir -p $out/bin
-          cp mcp_server.py $out/bin/mercy-calculator-mcp
-          chmod +x $out/bin/mercy-calculator-mcp
-        '';
-      };
-
+      mercy-calculator-mcp = pkgs.callPackage ./apps/calculator {};
+      mercy-agent          = pkgs.callPackage ./mercy/agent {};
     };
 
     nixosConfigurations.mercy = nixpkgs.lib.nixosSystem {
@@ -150,9 +164,9 @@ GOOGLE_API_KEY="YOUR_API_KEY_HERE"
       modules = [
         ./configuration.nix
         {
-          environment.systemPackages = with pkgs; [
+          environment.systemPackages = [
             self.packages.${system}.mercy-calculator-mcp
-            pkgs.python3Packages.google-adk
+            self.packages.${system}.mercy-agent
           ];
         }
       ];
@@ -163,7 +177,7 @@ GOOGLE_API_KEY="YOUR_API_KEY_HERE"
 
 ---
 
-## 6. configuration.nix
+## 7. configuration.nix
 
 ```nix
 { config, pkgs, ... }:
@@ -177,18 +191,20 @@ GOOGLE_API_KEY="YOUR_API_KEY_HERE"
 }
 ```
 
-API key is managed via `mercy/agent/.env`, not system environment.
-
 ---
 
 ## How to Run
 
 ```fish
-# Build system
+# Verify each package builds in isolation first
+nix build .#mercy-calculator-mcp
+nix build .#mercy-agent
+
+# Build and switch
 sudo nixos-rebuild switch --flake .#mercy
 
-# Run agent UI
-cd mercy/agent
+# Set API key and launch agent
+set -x GOOGLE_API_KEY "your-key-here"
 adk web --port 8000
 ```
 
@@ -213,6 +229,7 @@ Access at `http://localhost:8000`.
 
 ```
 apps/greeter/
+├── default.nix
 ├── logic.py
 └── mcp_server.py
 ```
@@ -241,20 +258,34 @@ if __name__ == "__main__":
     mcp.run()
 ```
 
-### Add to `flake.nix`
+### `apps/greeter/default.nix`
 
 ```nix
-mercy-greeter-mcp = pkgs.python3Packages.buildPythonApplication {
+{ python3Packages }:
+
+python3Packages.buildPythonApplication {
   pname = "mercy-greeter-mcp";
   version = "0.1";
-  src = ./apps/greeter;
-  propagatedBuildInputs = [ pkgs.python3Packages.fastmcp ];
+  src = ./.;
+  propagatedBuildInputs = [ python3Packages.fastmcp ];
   installPhase = ''
     mkdir -p $out/bin
     cp mcp_server.py $out/bin/mercy-greeter-mcp
     chmod +x $out/bin/mercy-greeter-mcp
   '';
-};
+}
+```
+
+### Add to `flake.nix`
+
+```nix
+mercy-greeter-mcp = pkgs.callPackage ./apps/greeter {};
+```
+
+And add to `environment.systemPackages`:
+
+```nix
+self.packages.${system}.mercy-greeter-mcp
 ```
 
 ### Add to `mercy/agent/agent.py`
@@ -270,9 +301,10 @@ McpToolset(
 ),
 ```
 
-### Rebuild
+### Verify and rebuild
 
 ```fish
+nix build .#mercy-greeter-mcp
 sudo nixos-rebuild switch --flake .#mercy
 ```
 
@@ -280,7 +312,7 @@ sudo nixos-rebuild switch --flake .#mercy
 
 ## Key Point
 
-> Adding a tool = **2 files + 1 flake entry + 1 McpToolset entry**
+> Adding a tool = **3 files + 1 callPackage entry + 1 systemPackages entry + 1 McpToolset entry**
 
 No router changes. No manifest files. No filesystem registration.
 
@@ -292,6 +324,7 @@ No router changes. No manifest files. No filesystem registration.
 * No retries
 * No persistent memory (future roadmap item)
 * ADK Web UI is dev-only, not for production
+* API key managed via runtime environment variable
 
 ---
 
@@ -301,14 +334,12 @@ No router changes. No manifest files. No filesystem registration.
 
 * ADK owns orchestration — no custom routing logic
 * MCP protocol used correctly over stdio
-* Tools are isolated binaries, spawned on demand
+* Tools and agent are isolated Nix packages, composable and independently buildable
 * Architecture is not a dead end — memory, multi-agent, and TUI layers can be added incrementally
+* CI can build and validate each package independently via `nix build .#<package>`
 
-### Removed complexity vs v1.0
+### Removed complexity vs v1.1
 
-* Custom `router.py` (~50 lines of LLM call + JSON parsing) → gone
-* `tool_registry.py` (manifest scanning) → gone
-* `mcp_client.py` (raw subprocess JSON) → gone
-* `manifest.json` per tool → gone
-* GTK shell + threading → gone
-* `/etc/mercy/tools/` registration → gone
+* Inline derivations in `flake.nix` → each app has its own `default.nix`
+* `.env` file in Nix store → runtime environment variable
+* `nixos-24.05` → `nixos-26.05`
