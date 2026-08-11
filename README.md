@@ -1,6 +1,6 @@
-# Mercy OS
+# Mercy
 
-Mercy OS is governed AI infrastructure for organizations. It lets employees use AI
+Mercy is governed AI infrastructure for organizations. It lets employees use AI
 assistants over company data while giving the organization full control over who
 can access what — and a complete record of everything the AI is asked to do.
 
@@ -130,7 +130,7 @@ service and registered centrally.
 |---|---|
 | Client immutability | Read-only Ubuntu base image |
 | Rollback | Image-level versioning via CI/CD pipeline |
-| Application isolation | Tauri allowlist (client), systemd hardening / Docker (server-side) |
+| Application isolation | Tauri allowlist (client), VM isolation (server-side) |
 | Reproducibility | CI/CD pipeline, not the package manager |
 | Authentication | Keycloak, OAuth Authorization Code Flow |
 | Authorization | Governance server policy engine, deny-by-default |
